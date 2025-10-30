@@ -1,0 +1,44 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: thesis_fintech
+      DB_USER: thesis_admin
+      DB_PASSWORD: thesis_admin
+      DB_POOL_MIN_SIZE: 1
+      DB_POOL_MAX_SIZE: 10
+      DB_POOL_TIMEOUT: 30
+    volumes:
+      - ../backend:/app/backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    container_name: thesis_fintech_db
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: thesis_fintech
+      POSTGRES_USER: thesis_admin
+      POSTGRES_PASSWORD: thesis_admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thesis_admin -d thesis_fintech"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  postgres_data:
