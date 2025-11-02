@@ -11,11 +11,12 @@ Applicazione full-stack (backend FastAPI + future frontend React) che offre cont
 2. [Utilizzo rapido](#utilizzo-rapido)
 3. [Esempi di utilizzo](#esempi-di-utilizzo)
 4. [Configurazione](#configurazione)
-5. [Architettura e documentazione tecnica](#architettura-e-documentazione-tecnica)
-6. [Limitazioni, problemi noti e TODO](#limitazioni-problemi-noti-e-todo)
-7. [Come contribuire](#come-contribuire)
-8. [Licenza](#licenza)
-9. [Contatti e crediti](#contatti-e-crediti)
+5. [Keycloak & OIDC](#keycloak--oidc)
+6. [Architettura e documentazione tecnica](#architettura-e-documentazione-tecnica)
+7. [Limitazioni, problemi noti e TODO](#limitazioni-problemi-noti-e-todo)
+8. [Come contribuire](#come-contribuire)
+9. [Licenza](#licenza)
+10. [Contatti e crediti](#contatti-e-crediti)
 
 ## Installazione
 1. **Clona il repository**
@@ -51,7 +52,16 @@ Applicazione full-stack (backend FastAPI + future frontend React) che offre cont
    ```
 
 ## Utilizzo rapido
-- **Avvio backend**  
+- **Stack Docker completo (Postgres + Keycloak + backend)**  
+  ```bash
+  cd infra
+  docker compose up -d --build postgres keycloak otp backend
+  docker compose ps
+  cd ..
+  ```
+  L'import del realm Keycloak avviene automaticamente da `infra/keycloak/realms/thesis-realm.json`.
+
+- **Avvio backend (dev locale senza Docker)**  
   ```bash
   cd backend
   .venv\Scripts\activate
@@ -76,15 +86,38 @@ Applicazione full-stack (backend FastAPI + future frontend React) che offre cont
   ```
 
 ## Esempi di utilizzo
-### Chiamate API di base
+### 1. Ottenere un access token da Keycloak
 ```bash
-curl -H "X-User-Id: aaaaaaaa-1111-2222-3333-444444444444" http://localhost:8000/accounts
-
-curl -H "X-User-Id: aaaaaaaa-1111-2222-3333-444444444444" \
-     -H "Content-Type: application/json" \
-     -d '{"account_id":"bbbbbbbb-1111-2222-3333-555555555555","amount":"50.00","currency":"EUR","category":"food","direction":"buy","idem_key":"demo-1"}' \
-     http://localhost:8000/transactions
+curl -X POST http://localhost:8080/realms/thesis/protocol/openid-connect/token \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "client_id=frontend" \
+     -d "grant_type=password" \
+     -d "username=demo-user" \
+     -d "password=DemoPassword!123"
 ```
+Risposta: JSON con `access_token`, `refresh_token`, `scope` (`thesis-access`) e claim `user_id`.
+
+### 2. Chiamate API con Bearer token
+```bash
+ACCESS_TOKEN="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8000/accounts
+
+curl -X POST http://localhost:8000/transactions \
+     -H "Authorization: Bearer $ACCESS_TOKEN" \
+     -H "Content-Type: application/json" \
+     -H "Idempotency-Key: demo-1" \
+     -d '{"account_id":"bbbbbbbb-1111-2222-3333-555555555555","amount":"50.00","currency":"EUR","category":"food","direction":"buy"}'
+```
+### 3. Richiedere una OTP
+```bash
+curl -X POST http://localhost:8000/otp/send \
+     -H "Authorization: Bearer $ACCESS_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"channel_code":"EMAIL"}'
+```
+Per l'invio SMS impostare `"channel_code": "SMS"` e specificare `destination` con il numero simulato.
+
 ### Accesso al database da FastAPI
 ```python
 from fastapi import APIRouter, Depends
@@ -103,9 +136,9 @@ async def list_accounts(conn: AsyncConnection = Depends(get_connection_with_rls)
 La dipendenza `get_connection_with_rls` imposta `app.current_user_id` nella sessione PostgreSQL, sbloccando le policy Row-Level Security per ogni richiesta.
 
 ## Configurazione
-- **Variabili d’ambiente principali (`.env`)**
+- **Variabili d'ambiente principali (`.env`)**
   ```
-  DB_HOST=127.0.0.1
+  DB_HOST=postgres            # usare 127.0.0.1 se si avvia tutto senza Docker
   DB_PORT=5432
   DB_NAME=thesis_fintech
   DB_USER=thesis_admin
@@ -113,10 +146,36 @@ La dipendenza `get_connection_with_rls` imposta `app.current_user_id` nella sess
   DB_POOL_MIN_SIZE=1
   DB_POOL_MAX_SIZE=10
   DB_POOL_TIMEOUT=30.0
+  OIDC_ENABLED=true
+  OIDC_ISSUER=http://localhost:8080/realms/thesis
+  OIDC_CLIENT_ID=frontend
+  OIDC_AUDIENCE=backend
+  OIDC_JWKS_URL=http://localhost:8080/realms/thesis/protocol/openid-connect/certs
+  OIDC_USER_ID_CLAIM=user_id
+  OIDC_JWKS_CACHE_TTL_SECONDS=300
+  OIDC_CLOCK_SKEW_SECONDS=60
+  OIDC_DEV_DEFAULT_SCOPES=accounts:read transactions:read transactions:write
+  OTP_SERVICE_BASE_URL=http://localhost:9000
+  OTP_SERVICE_TIMEOUT_SECONDS=5.0
+  OTP_CODE_TTL_SECONDS=60
   ```
-- **Header temporaneo per identity**: `X-User-Id` (verrà sostituito dai token Keycloak).  
+- **Autenticazione**: con `OIDC_ENABLED=true` il backend valida i token JWT emessi da Keycloak, propaga `user_id` nelle policy RLS e richiede gli scope `accounts:read` / `transactions:*`.  
+- **Microservizio OTP**: il servizio FastAPI (porta 9000) invia email reali se configurato con `OTP_SMTP_*` e scrive gli SMS simulati a log (`OTP_SMS_LOG_FILE`).  
 - **Dipendenze esterne**: PostgreSQL 16 via Docker Compose; in roadmap Keycloak, gateway NGINX, servizi OTP reali.  
 - **File da consultare**: `infra/docker-compose.yml`, `docs/openapi.yaml`, `backend/db/er/`.
+
+## Keycloak & OIDC
+- **Provisioning automatico**: `infra/keycloak/realms/thesis-realm.json` importa realm `thesis`, client `frontend` (PKCE/public) e `backend` (confidential), client scope `thesis-access` con mapper:
+  - `realm-roles-scope`: espone i realm role come claim `scope`.
+  - `user-id-attribute`: mappa l'attributo utente `user_id` nella claim omonima.
+- **Utente demo**: `demo-user` / `DemoPassword!123`, con attributo `user_id=aaaaaaaa-1111-2222-3333-444444444444` e ruoli `accounts:read`, `transactions:read`, `transactions:write`.
+- **Audience**: mapper `frontend-audience-backend` aggiunge `aud=["backend"]` ai token del client `frontend`; il backend accetta solo token destinati a quell'audience.
+- **Servizio OTP**: endpoint `http://localhost:9000/otp/send` gestito dal microservizio FastAPI incluso nel compose (`otp`). Il backend lo invoca via `/otp/send` e registra audit in `otp_audits`.
+- **Flusso password grant per test**: comando `curl` mostrato negli esempi; in produzione usare PKCE/Authorization Code tramite frontend.
+- **Aggiornamenti manuali rapidi**:
+  - `docker compose -f infra/docker-compose.yml exec keycloak /opt/keycloak/bin/kcadm.sh ...` per gestire utenti/mapper da CLI.
+  - `Realm Settings → User profile` definisce l'attributo custom `user_id`.
+  - I nuovi utenti devono valorizzare `user_id` per passare le required action.
 
 ## Architettura e documentazione tecnica
 - **Struttura repo**
@@ -138,7 +197,6 @@ La dipendenza `get_connection_with_rls` imposta `app.current_user_id` nella sess
   - `docs/test-plan-saturday.md`: piano E2E per la sessione di collaudo.
 
 ## Limitazioni, problemi noti e TODO
-- Integrazione Keycloak/OIDC non ancora attiva: l’header `X-User-Id` serve solo in fase prototipale.
 - Microservizio OTP email/SMS in lavorazione, da integrare con gli endpoint di backend.
 - Frontend React/Vite non ancora implementato; il prototipo è backend-only.
 - Mancano pipeline CI/CD e test di hardening (rate limiting, headers di sicurezza su gateway).
@@ -160,3 +218,4 @@ Licenza in definizione: il file `LICENSE` verrà aggiunto prima della pubblicazi
 - **Autore**: Alessandro Turino — <turino.alessandro2201@gmail.com>
 - **Documentazione**: `docs/decision-log.md`, `progress/Day N - ddmmyyyy.md`
 - Ringraziamenti a relatori e colleghi che supportano il progetto accademico.
+
