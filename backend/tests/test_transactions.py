@@ -59,7 +59,12 @@ def ensure_secondary_user_with_account(conn) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_transactions_returns_inserted_rows(async_client, sync_connection, cleanup_transactions):
+async def test_list_transactions_returns_inserted_rows(
+    async_client,
+    sync_connection,
+    cleanup_transactions,
+    auth_headers_factory,
+):
     """Verifica che l'elenco transazioni includa le righe inserite manualmente."""
     transaction_id = str(uuid4())
     with sync_connection.cursor() as cur:
@@ -82,9 +87,10 @@ async def test_list_transactions_returns_inserted_rows(async_client, sync_connec
         )
         sync_connection.commit()
 
+    headers = auth_headers_factory(user_id=DEFAULT_USER_ID, scopes={"transactions:read"})
     response = await async_client.get(
         "/transactions",
-        headers={"X-User-Id": DEFAULT_USER_ID},
+        headers=headers,
         params={"category": "shopping"},
     )
 
@@ -94,7 +100,7 @@ async def test_list_transactions_returns_inserted_rows(async_client, sync_connec
 
 
 @pytest.mark.asyncio
-async def test_create_transaction_supports_idempotency(async_client, cleanup_transactions):
+async def test_create_transaction_supports_idempotency(async_client, cleanup_transactions, auth_headers_factory):
     """Controlla che la creazione della transazione sia idempotente con la stessa idem_key."""
     payload = {
         "account_id": DEFAULT_ACCOUNT_ID,
@@ -105,9 +111,13 @@ async def test_create_transaction_supports_idempotency(async_client, cleanup_tra
         "idem_key": str(uuid4()),
     }
 
+    headers = auth_headers_factory(
+        user_id=DEFAULT_USER_ID,
+        scopes={"transactions:write", "transactions:read"},
+    )
     first_response = await async_client.post(
         "/transactions",
-        headers={"X-User-Id": DEFAULT_USER_ID},
+        headers=headers,
         json=payload,
     )
     assert first_response.status_code == 201
@@ -115,7 +125,7 @@ async def test_create_transaction_supports_idempotency(async_client, cleanup_tra
 
     second_response = await async_client.post(
         "/transactions",
-        headers={"X-User-Id": DEFAULT_USER_ID},
+        headers=headers,
         json=payload,
     )
     assert second_response.status_code == 200
@@ -126,7 +136,12 @@ async def test_create_transaction_supports_idempotency(async_client, cleanup_tra
 
 
 @pytest.mark.asyncio
-async def test_list_transactions_respects_rls(async_client, sync_connection, cleanup_transactions):
+async def test_list_transactions_respects_rls(
+    async_client,
+    sync_connection,
+    cleanup_transactions,
+    auth_headers_factory,
+):
     """Verifica che transazioni di utenti diversi restino isolate via RLS."""
     ensure_secondary_user_with_account(sync_connection)
     foreign_transaction_id = str(uuid4())
@@ -147,16 +162,24 @@ async def test_list_transactions_respects_rls(async_client, sync_connection, cle
                 "buy",
                 datetime.utcnow(),
             ),
-        )
+    )
     sync_connection.commit()
 
+    secondary_headers = auth_headers_factory(
+        user_id=SECONDARY_USER_ID,
+        scopes={"transactions:read"},
+    )
+    primary_headers = auth_headers_factory(
+        user_id=DEFAULT_USER_ID,
+        scopes={"transactions:read"},
+    )
     secondary_response = await async_client.get(
         "/transactions",
-        headers={"X-User-Id": SECONDARY_USER_ID},
+        headers=secondary_headers,
     )
     primary_response = await async_client.get(
         "/transactions",
-        headers={"X-User-Id": DEFAULT_USER_ID},
+        headers=primary_headers,
     )
 
     assert secondary_response.status_code == 200
