@@ -10,7 +10,7 @@ from psycopg import AsyncConnection
 
 from ..config import Settings, get_settings
 from ..db import get_connection_with_rls
-from ..dependencies import AuthenticatedUser, get_authenticated_user
+from ..dependencies import AuthenticatedUser, get_authenticated_user, require_scope
 from ..schemas import OtpSendRequest, OtpSendResponse
 from ..services.otp_client import OtpServiceClient, OtpServiceError
 
@@ -60,7 +60,7 @@ async def _resolve_channel(conn: AsyncConnection, channel_code: str) -> tuple[st
 async def send_otp(
     payload: OtpSendRequest,
     conn: AsyncConnection = Depends(get_connection_with_rls),
-    user: AuthenticatedUser = Depends(get_authenticated_user),
+    user: AuthenticatedUser = Depends(require_scope("transactions:write")),
     settings: Settings = Depends(get_settings),
 ) -> OtpSendResponse:
     """
