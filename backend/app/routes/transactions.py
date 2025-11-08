@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from psycopg import AsyncConnection
 from psycopg.errors import ForeignKeyViolation
 
-from ..dependencies import get_current_user_id
+from ..dependencies import AuthenticatedUser, require_scope
 from ..db import get_connection_with_rls
 from ..schemas import TransactionCreate, TransactionListResponse, TransactionOut, TransactionResponse
 
@@ -60,7 +60,7 @@ async def list_transactions(
     end_date: Optional[date] = Query(default=None, alias="to"),
     category: Optional[str] = Query(default=None),
     conn: AsyncConnection = Depends(get_connection_with_rls),
-    user_id: str = Depends(get_current_user_id),
+    user: AuthenticatedUser = Depends(require_scope("transactions:read")),
 ) -> TransactionListResponse:
     """
     Restituisce le transazioni dell'utente con supporto a filtri opzionali.
@@ -70,7 +70,7 @@ async def list_transactions(
         end_date: Data massima inclusiva del periodo ricercato (`to`).
         category: Categoria testuale su cui filtrare i risultati.
         conn: Connessione asincrona al database prelevata dal pool.
-        user_id: Identificativo dell'utente corrente per la query.
+        user: Contesto dell'utente autenticato per estrarre l'identificativo.
 
     Restituisce:
         TransactionListResponse: Elenco di transazioni ordinate per data decrescente.
@@ -82,7 +82,7 @@ async def list_transactions(
         WHERE user_id = %s{where_clause}
         ORDER BY created_at DESC;
     """
-    params: List[object] = [user_id, *extra_params]
+    params: List[object] = [user.user_id, *extra_params]
     async with conn.cursor() as cur:
         await cur.execute(query, params)
         rows = await cur.fetchall()
@@ -99,7 +99,7 @@ async def create_transaction(
     payload: TransactionCreate,
     response: Response,
     conn: AsyncConnection = Depends(get_connection_with_rls),
-    user_id: str = Depends(get_current_user_id),
+    user: AuthenticatedUser = Depends(require_scope("transactions:write")),
 ) -> TransactionResponse:
     """
     Crea una nuova transazione idempotente associata al conto dell'utente.
@@ -108,7 +108,7 @@ async def create_transaction(
         payload: Dati di input forniti dal client per la nuova transazione.
         response: Oggetto risposta FastAPI da aggiornare in caso di idempotenza.
         conn: Connessione asincrona al database gestita dal pool.
-        user_id: Identificativo dell'utente corrente per i controlli di coerenza.
+        user: Informazioni dell'utente autenticato utilizzate per i controlli di coerenza.
 
     Restituisce:
         TransactionResponse: Dettaglio della transazione creata oppure già esistente.
@@ -120,7 +120,7 @@ async def create_transaction(
             FROM accounts
             WHERE id = %s AND user_id = %s;
             """,
-            (payload.account_id, user_id),
+            (payload.account_id, user.user_id),
         )
         account_match = await cur.fetchone()
         if account_match is None:
@@ -140,14 +140,14 @@ async def create_transaction(
                 """,
                 (
                     str(uuid4()),
-                    user_id,
+                    user.user_id,
                     payload.account_id,
                     payload.amount,
                     payload.currency,
                     payload.category,
                     payload.idem_key,
-                payload.direction,
-            ),
+                    payload.direction,
+                ),
             )
         except ForeignKeyViolation as err:
             await conn.rollback()
@@ -168,7 +168,7 @@ async def create_transaction(
             FROM transactions
             WHERE user_id = %s AND idem_key = %s;
             """,
-            (user_id, payload.idem_key),
+            (user.user_id, payload.idem_key),
         )
         existing_row = await cur.fetchone()
         await conn.commit()
