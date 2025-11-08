@@ -31,11 +31,12 @@ class Settings(BaseSettings):
     oidc_user_id_claim: str = "sub"
     oidc_jwks_cache_ttl_seconds: int = 300
     oidc_clock_skew_seconds: int = 60
-    oidc_dev_default_scopes: str = "accounts:read transactions:read transactions:write"
+    oidc_dev_default_scopes: str = "accounts:read transactions:read transactions:write crypto:read"
 
     otp_service_base_url: str | None = None
     otp_service_timeout_seconds: float = 5.0
     otp_code_ttl_seconds: int = 60
+    cors_allowed_origins: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(
         env_file=(".env", "backend/.env"),
@@ -102,6 +103,15 @@ class Settings(BaseSettings):
             bool: True se il base URL del servizio è definito.
         """
         return bool(self.otp_service_base_url)
+
+    def cors_allowed_origins_list(self) -> list[str]:
+        """
+        Restituisce la lista di origini abilitate per il CORS.
+
+        Restituisce:
+            list[str]: Origini separate da virgola presenti nella configurazione.
+        """
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

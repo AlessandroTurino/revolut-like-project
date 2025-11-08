@@ -12,7 +12,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from backend.app.dependencies import get_current_user_id
+from backend.app.dependencies import AuthenticatedUser, get_authenticated_user
 
 from .config import Settings
 
@@ -123,19 +123,19 @@ async def lifespan_pool(settings: Settings) -> AsyncIterator[AsyncConnectionPool
 
 async def get_connection_with_rls(
     request: Request,
-    user_id: str = Depends(get_current_user_id),
+    user: AuthenticatedUser = Depends(get_authenticated_user),
 ) -> AsyncIterator[AsyncConnection]:
     """
     Fornisce una connessione proveniente dal pool come dipendenza FastAPI.
 
     Argomenti:
         request: Oggetto `Request` che consente l'accesso allo stato dell'applicazione.
-        user_id: Identificativo univoco dell'utente corrente.
+        user: Informazioni sull'utente autenticato da cui ricavare l'identificativo.
 
     Restituisce:
         AsyncConnection: Connessione asincrona condivisa dal pool per la durata del contesto.
     """
     pool: AsyncConnectionPool = request.app.state.db_pool
     async with pool.connection() as connection:
-        await set_current_user_id(connection, user_id)
+        await set_current_user_id(connection, user.user_id)
         yield connection

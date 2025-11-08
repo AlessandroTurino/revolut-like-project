@@ -4,10 +4,11 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .config import Settings, get_settings
 from .db import lifespan_pool
-from .routes import accounts_router, otp_router, transactions_router
+from .routes import accounts_router, crypto_positions_router, otp_router, transactions_router
 
 
 @asynccontextmanager
@@ -44,6 +45,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.get("/health", tags=["health"])
     async def healthcheck() -> dict[str, str]:
         """
@@ -58,6 +67,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(accounts_router)
+    app.include_router(crypto_positions_router)
     app.include_router(transactions_router)
     app.include_router(otp_router)
 

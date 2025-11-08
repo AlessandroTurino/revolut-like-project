@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class AccountOut(BaseModel):
@@ -62,6 +62,36 @@ class TransactionResponse(BaseModel):
     """Payload di risposta per singole operazioni sulle transazioni."""
 
     data: TransactionOut
+
+
+class CryptoPositionOut(BaseModel):
+    """Rappresenta una posizione crypto aggregata per l'utente corrente."""
+
+    id: UUID = Field(..., description="Identificativo univoco della posizione")
+    ticker: str = Field(..., min_length=1, max_length=12, description="Ticker dell'asset (es. BTC)")
+    name: str = Field(..., description="Nome descrittivo dell'asset")
+    amount: Decimal = Field(..., ge=Decimal("0"), description="Quantità detenuta")
+    eur_value: Decimal = Field(..., description="Valutazione corrente in EUR")
+    change_24h_percent: Optional[Decimal] = Field(
+        None,
+        description="Variazione percentuale rispetto al valore di carico",
+    )
+    icon_url: Optional[HttpUrl] = Field(
+        None, description="URL del logo associato all'asset"
+    )
+    price_source: Optional[str] = Field(None, description="Provider della quotazione")
+    network: Optional[str] = Field(None, description="Blockchain o rete di riferimento")
+    account_id: Optional[UUID] = Field(None, description="Conto custodial collegato")
+    synced_at: Optional[datetime] = Field(None, description="Ultimo sync andato a buon fine")
+    created_at: datetime = Field(..., description="Istante di inserimento della posizione")
+    updated_at: datetime = Field(..., description="Istante di ultimo aggiornamento della posizione")
+
+
+class CryptoPositionListResponse(BaseModel):
+    """Elenco delle posizioni crypto con il valore totale aggregato."""
+
+    data: List[CryptoPositionOut]
+    total_eur_value: Decimal = Field(..., description="Somma delle valutazioni in EUR")
 
 
 class OtpSendRequest(BaseModel):
